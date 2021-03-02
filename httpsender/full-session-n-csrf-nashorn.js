@@ -313,17 +313,17 @@ function buildRequestCSRF(msg, session) {
 function doAuth(helper) {
 
 	var preAuthData = doAuthInternal(buildPreAuthMessage(), helper, true, AUTH_RETRIES, "POST-FOR-PRE-AUTH");
-	if(!preAuthData) return null;
 	log("{ method: doAuth (pre-login): response { "
 		+ "session: " + (preAuthData ? preAuthData.session : null) + ", "
 		+ "csrf: " + (preAuthData ? preAuthData.csrf : null) + "}}");
+	if(!preAuthData) return null;
 
 	var authMessage = buildAuthMessage(preAuthData.session, preAuthData.csrf);
 	var authData = doAuthInternal(authMessage, helper, true, AUTH_RETRIES, "POST-FOR-AUTH");
-	if(!authData) return null;
 	log("{ method: doAuth (login): response { "
 		+ "session: " + (authData ? authData.session : null) + ", "
 		+ "csrf: " + (authData ? authData.csrf : null) + "}}");
+	if(!authData) return null;
 
 	return new AuthInfo(authData.session, authData.csrf);
 }
@@ -369,8 +369,8 @@ function replaceAuthInfo(msg, authInfo) {
 	} else log("{ method: replaceAuthInfo, no CSRF param to replace found }");
 	
 	if(hasValue(authInfo.session)) {
-		log("{ method: replaceAuthInfo, replacing sessionCookie }");
 		var added = addOrReplaceSessionCookie(msg, authInfo.session);
+		log("{ method: replaceAuthInfo, sessionCookie: " + (added ? "replaced" : "pushed") + "  }");
 	} else log("{ method: replaceAuthInfo, sessionCookie not found! }");
 }
 
@@ -405,12 +405,14 @@ function getSessionCookie(msg, domain, sessionCookieName) {
  */
 function addOrReplaceSessionCookie(msg, session) {
 
+	log("{ method: addOrReplaceSessionCookie, replacing sessionCookie }");
+
 	var requestHeader = msg.getRequestHeader();
 	var cookies = requestHeader.getHttpCookies(); // getCookieParams
 	
 	var current = null;
 	var notFound = true;
-	for( var i = 0; i < cookies.length; ++i) {
+	for(var i in cookies) {
 		current = cookies[i];
 		if(current.getName() == SESSION_COOKIE_NAME) {
 			current.setValue(session);
@@ -548,27 +550,22 @@ function isCSRFRequired(msg) {
 }
 
 function isParamPresent(params, name) {
-	for(e in params) {
+	for(var e in params) {
 		if(e.getName().equals(name))
 			return true;
 	} return false;
 }
 
-/**
- * Will fail for JS objects check (return Object.keys(value).length > 0) in
- * advantage of Java objects (size) check.
- */
 function hasValue(value) {
 	if(value === null)
 		return false
-	switch(typeof value) {
+	switch({}.toString.call(value).split(' ')[1].slice(0, -1).toLowerCase()) {
 		case 'undefined': return false;
 		case 'boolean': return true;
 		case 'number': return true;
 		case 'string': return value.length > 0;
-		case 'array': return value.length > 0;
-		case 'object': return value.size() > 0;
-		default: return true;
+		case 'object': return Object.keys(value).length > 0;
+		default: return value.size(); // java.util.collection...
 	}
 }
 
@@ -599,7 +596,7 @@ function parseInitiator(initiator) {
  * ES5 (indexOf)
  */
 function find(arr, f) {
-	for(i in arr) {
+	for(var i in arr) {
 		var e = arr[i];
 		if(f(e)) return e;
 	} return null;
@@ -607,10 +604,11 @@ function find(arr, f) {
 
 var writeToLog = function(text) {
 	print(" -- { script: x-csrf-token, tid: " + ID() + ", info: " + text + " }");
-}
+};
 
 var log = DO_LOG
 	? (SYNC_LOG
 		? Java.synchronized(writeToLog, Byte.TYPE)
 		: writeToLog
 	): function(){};
+
