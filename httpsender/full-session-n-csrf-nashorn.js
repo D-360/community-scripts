@@ -18,9 +18,8 @@
  * limitations under the License.
  */
  
-//var src = new net.htmlparser.jericho.Source(page); // Rhino
-var Source = Java.type("net.htmlparser.jericho.Source"); // Nashorn
-var ScriptVars = Java.type("org.zaproxy.zap.extension.script.ScriptVars"); // warn: threads!
+var Source = Java.type("net.htmlparser.jericho.Source");
+var ScriptVars = Java.type("org.zaproxy.zap.extension.script.ScriptVars");
 var HttpSender = Java.type("org.parosproxy.paros.network.HttpSender");
 var HttpMessage = Java.type("org.parosproxy.paros.network.HttpMessage");
 var HttpHeader = Java.type("org.parosproxy.paros.network.HttpHeader");
@@ -45,7 +44,12 @@ var AUTH_RETRIES = 0;
 var CSRF_RETRIES = 0;
 var RETRIES_ON_IO_ERROR = 1;
 
-// DVWA
+var DO_LOG = true;
+var SYNC_LOG = false;
+var SET_USE_GLOBAL_STATE = false;
+var SET_USE_COOKIES = false;
+
+// MOFIFY THIS LINES ACCORDING TO YOUR TARGET
 var HOST = "localhost";
 var USERNAME = "admin";
 var PASSWORD = "password";
@@ -59,13 +63,6 @@ var AUTH_POST = "http://" + HOST + "/login.php";
 var CSRF_GET = "http://" + HOST + "/login.php";
 var CSRF_PER_REQUEST = true;
 
-var DO_LOG = true;
-var SYNC_LOG = false;
-var SET_USE_GLOBAL_STATE = false;
-var SET_USE_COOKIES = false;
-
-//var doLog = java.lang.Math.random() <= LOG_THRESHOLD;
-
 function ID() { return Thread.currentThread().getId() }
 function AuthInfo(session, csrf) {
 	this.session = session;
@@ -75,8 +72,8 @@ function AuthInfo(session, csrf) {
 function AuthPool(name) {
 	this.sessions = [];
 	this.name = name;
-	this.lock = Java.synchronized(function(e) { e.id = ID() }); // sync
-	this.unlock = Java.synchronized(function(e) { e.id = null }); // sync
+	this.lock = Java.synchronized(function(e) { e.id = ID() });
+	this.unlock = Java.synchronized(function(e) { e.id = null });
 	this.toJson = function() { return JSON.stringify(this.sessions) };
 	this.toString = function() { return this.name + ": " + JSON.stringify(this.sessions) };
 	this.pushSession = function(authInfo) { this.sessions.push(authInfo); return this };
@@ -94,19 +91,12 @@ function AuthPool(name) {
 } var authPool = new AuthPool(DATA_KEY);
 
 function skipInitiator(initiator) {
-	//print(initiator +","+ tokenPerAuth +","+ isSending)
 	switch(initiator) {
 		case HttpSender.ACCESS_CONTROL_SCANNER_INITIATOR: return true;
-		//case HttpSender.ACTIVE_SCANNER_INITIATOR: return false;
-		//case HttpSender.AJAX_SPIDER_INITIATOR: return false;
-		case HttpSender.AUTHENTICATION_INITIATOR: return true; // not-used
+		case HttpSender.AUTHENTICATION_INITIATOR: return true;
 		case HttpSender.BEAN_SHELL_INITIATOR: return true;
 		case HttpSender.CHECK_FOR_UPDATES_INITIATOR: return true;
-		//case HttpSender.FORCED_BROWSE_INITIATOR: return false;
-		//case HttpSender.FUZZER_INITIATOR: return false;
-		//case HttpSender.MANUAL_REQUEST_INITIATOR: return false;
 		case HttpSender.PROXY_INITIATOR: return true;
-		//case HttpSender.SPIDER_INITIATOR: return false;
 		default: return false;
 	}
 }
@@ -141,8 +131,6 @@ function doRequest(msg, helper, follow_redirects, retries, note) {
 	var httpSender = helper.getHttpSender();
 
 	msg.setNote(note);	
-	//if(retries != null) // java.lang.IllegalStateException?
-		//httpSender.setMaxRetriesOnIOError(retries);
 
 	try { httpSender.sendAndReceive(msg, follow_redirects); }
 	catch(e) {
@@ -155,9 +143,7 @@ function doRequest(msg, helper, follow_redirects, retries, note) {
 
 function sendingRequest(msg, initiator, helper) {
 
-	//print(msg.toEventData());
 
-	// skips: ACCESS_CONTROL_SCANNER_INITIATOR, AUTHENTICATION_INITIATOR, BEAN_SHELL_INITIATOR, CHECK_FOR_UPDATES_INITIATOR, PROXY_INITIATOR
 	if(doSkip(msg, initiator, "sendingRequest")) {
 		return;
 	}
@@ -182,9 +168,6 @@ function sendingRequest(msg, initiator, helper) {
 
 	replaceAuthInfo(msg, authInfo);
 
-	// required since the sender (at least when fuzzing) decodes the payload and does not encode
-	// it again (if you don't add the preprocessor i guess), so length mismatch (seems a bug). I.e,
-	// some_enc_post_param=001%2F001, then some_enc_post_param=001/001 and not updated.
 	requestHeader.setContentLength(requestBody.length());
 
 	log("{ method: sendingRequest, auth-pool: " + authPool + " }");
@@ -193,15 +176,12 @@ function sendingRequest(msg, initiator, helper) {
 
 function responseReceived(msg, initiator, helper) {
 
-	//print(msg.toEventData());
-
 	var responseHeader = msg.getResponseHeader();
 	var httpSession = msg.getHttpSession();
 	var r_code = responseHeader.getStatusCode();
 
 	log("{ method: responseReceived (" + procRC(responseHeader, r_code) + "), auth-pool: " + authPool + " }");
 
-	// Never skips AUTH; skips: if token-per-session or ACCESS_CONTROL_SCANNER_INITIATOR, BEAN_SHELL_INITIATOR, CHECK_FOR_UPDATES_INITIATOR, PROXY_INITIATOR
 	if(doSkip(msg, initiator, "responseReceived")) {
 		return;
 	}
@@ -216,9 +196,6 @@ function responseReceived(msg, initiator, helper) {
 			authPool.pushSession(authInfo);
 	} else authInfo = authPool.recoverSession();
 
-	// do not extract CSRF here since it could be not correlated
-	// and it doesn't must to appear at the response neither
-	
 	authPool.releaseSession();
 
 	log("{ method: responseReceived (out), auth-info: " + authInfo + " }");
@@ -239,8 +216,8 @@ function buildFromMessage(msg, version, secure, uri, escaped, method, data, char
 			: data);
 		request.setRequestBody(body);
 		header.setContentLength(request.getRequestBody().length());
-		if(content_type && (HttpRequestHeader.POST.equals(method) || HttpRequestHeader.PUT.equals(method))) { // uri-check if needed in a future...
-			header.setHeader(HttpHeader.CONTENT_TYPE, content_type); // sometimes, content-type should be removed...
+		if(content_type && (HttpRequestHeader.POST.equals(method) || HttpRequestHeader.PUT.equals(method))) {
+			header.setHeader(HttpHeader.CONTENT_TYPE, content_type);
 		}
 	}
 	if(version)
@@ -256,9 +233,6 @@ function buildFromMessage(msg, version, secure, uri, escaped, method, data, char
 	if(user_agent)
 		header.setDefaultUserAgent(user_agent);
 
-	//print("header: " + header);
-	//print("body: " + request.getRequestBody());
-
 	return request;
 }
 
@@ -267,7 +241,6 @@ function buildNewMessage(version, secure, uri, escaped, method, data, charset, e
 }
 
 function buildPreAuthMessage() {
-	//return buildNewMessage(HTTP_VERSION, true, PRE_AUTH_GET, false, HttpRequestHeader.GET) //***
 	return buildNewMessage(HTTP_VERSION, null, PRE_AUTH_GET, false, HttpRequestHeader.GET)
 }
 
@@ -276,7 +249,7 @@ function buildAuthMessage(session, csrf) {
 	var cookies = [cookie];
 	var message = buildNewMessage(
 		HTTP_VERSION,
-		null, //true, //***
+		null,
 		AUTH_POST,
 		false,
 		HttpRequestHeader.POST,
@@ -298,7 +271,7 @@ function buildRequestCSRF(msg, session) {
 	var cookies = [cookie];
 	var message = buildNewMessage(
 		HTTP_VERSION,
-		null, //true, //***
+		null,
 		CSRF_GET,
 		false,
 		HttpRequestHeader.GET,
@@ -374,41 +347,22 @@ function replaceAuthInfo(msg, authInfo) {
 	} else log("{ method: replaceAuthInfo, sessionCookie not found! }");
 }
 
-/**
- * HttpCookie:
- * 	getComment(), getCommentURL(), getDiscard(), getDomain(), getMaxAge(), getName()
- * 	getPath(), getPortlist(), getSecure(), getValue(), getVersion()
- */
 function getSessionCookie(msg, domain, sessionCookieName) {
 	var cookie = null;
 	var cookies = msg.getResponseHeader().getHttpCookies(domain);
 	log("{ method: getSessionCookie, cookies: " + cookies + " }");
 	for(var i in cookies) {
 		if(cookies[i].getName() == sessionCookieName)
-			cookie = cookies[i].getValue(); // clients use to use the last one...
+			cookie = cookies[i].getValue();
 	} return cookie;
 }
 
-/**
- * workaround to remove issues (due to lack of equals() I guess), e.g:
- * 
- * var cookies = msg.getRequestHeader().getCookieParams();
- * var present = false;
- * while(present = cookies.remove(cookie)); // required, but does not remove
- * cookies.add(cookie); // does not overwrite
- * requestHeader.setCookieParams(cookies);
- * 
- * //print("initial cookies: " + cookies);
- * //print("does not remove this way! " + requestHeader.getHttpCookies().remove(cookie));
- * //print("does not remove this way! " + requestHeader.getCookieParams().remove(cookie));
- * 
- */
 function addOrReplaceSessionCookie(msg, session) {
 
 	log("{ method: addOrReplaceSessionCookie, replacing sessionCookie }");
 
 	var requestHeader = msg.getRequestHeader();
-	var cookies = requestHeader.getHttpCookies(); // getCookieParams
+	var cookies = requestHeader.getHttpCookies();
 	
 	var current = null;
 	var notFound = true;
@@ -423,7 +377,7 @@ function addOrReplaceSessionCookie(msg, session) {
 	if(notFound)
 		cookies.add(new HttpCookie(SESSION_COOKIE_NAME, session));
 
-	requestHeader.setCookies(cookies); // req
+	requestHeader.setCookies(cookies);
 
 	return notFound;
 }
@@ -447,7 +401,7 @@ function requestCSRF(msg, session, helper) {
 	var csrfMessage = doRequest(
 		buildRequestCSRF(msg, session),
 		helper,
-		true, // follow_redirects
+		true,
 		CSRF_RETRIES,
 		"GET-FOR-CSRF");
 	if(csrfMessage == null)
@@ -494,7 +448,7 @@ function replaceHeaderCSRF(msg, csrf) {
 function replacePostCSRF(msg, csrf) {
 	var requestHeader = msg.getRequestHeader();
 	var requestBody = msg.getRequestBody();
-	var formParams = msg.getFormParams(); // TreeSet<HtmlParameter>
+	var formParams = msg.getFormParams();
 	var ret = replaceCSRFParams(formParams, csrf);
 	if(ret.count > 0) {
  		requestBody.setFormParams(ret.params);
@@ -504,7 +458,7 @@ function replacePostCSRF(msg, csrf) {
 }
 
 function replaceGetCSRF(msg, csrf) {
-	var urlParams = msg.getUrlParams(); // TreeSet<HtmlParameter>
+	var urlParams = msg.getUrlParams();
 	var ret = replaceCSRFParams(urlParams, csrf);
 	if(ret.count > 0) {
  		msg.setGetParams(ret.params);
@@ -565,7 +519,7 @@ function hasValue(value) {
 		case 'number': return true;
 		case 'string': return value.length > 0;
 		case 'object': return Object.keys(value).length > 0;
-		default: return value.size(); // java.util.collection...
+		default: return value.size();
 	}
 }
 
@@ -590,11 +544,6 @@ function parseInitiator(initiator) {
 	}
 }
 
-/**
- * ES7 (includes)
- * ES6 (find)
- * ES5 (indexOf)
- */
 function find(arr, f) {
 	for(var i in arr) {
 		var e = arr[i];
