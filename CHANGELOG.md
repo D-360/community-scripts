@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Passive scan script for finding potential s3 Bucket URLs
 - httpsender/full-session-n-csrf-nashorn.js > full session and csrf token management.
 - payloadprocessor/to-hex.js > string to hex payload script.
 - selenium and session scripts.
@@ -22,9 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - percentage
   - randomcase
   - space2comments
+- Add Google API keys finder script
 
 ### Changed
 - Update minimum ZAP version to 2.10.0.
+- Rename reliability to confidence.
 - standalone/enableDebugLogging.js > use new Log4j 2 APIs.
 - standalone/window_creation_template.js > no longer extend `AbstractFrame`.
 - httpsender/Alert on HTTP Response Code Errors.js and Alert on Unexpected Content Types.js:
